@@ -1,0 +1,623 @@
+#!/usr/bin/python
+'''
+    The Solitaire Encryption algorithm. 
+
+    D. A. Brue 2010
+    Python version 2.7 at time of writing
+'''
+
+##########################################################################################
+# Set up Global variables
+global Debug
+global Analyze 
+global dbugf
+global acutf
+global aoutf
+
+global DeckSize
+# Determine if using full deck or half deck
+# this is a 'change the code' parameter, it must be edited here. 
+DeckSize = 54
+
+# Set Joker Values depending on DeckSize
+global JKA
+global JKB
+if (DeckSize == 28):
+    JKA = 26   # Remember the deck is [0,27]
+    JKB = 27   # Remember the deck is [0,27]
+elif (DeckSize == 54):
+    JKA = 52   # Remember the deck is [0,53]
+    JKB = 53   # Remember the deck is [0,53]
+
+# Set up Dictionary for Number to Letter
+global N2A, A2N, Num2Out
+N2A = \
+{ 0:'a', 1:'b', 2:'c', 3:'d', 4:'e', 5:'f', 6:'g', 7:'h', 8:'i', 9:'j',10:'k',11:'l',12:'m', \
+ 13:'n',14:'o',15:'p',16:'q',17:'r',18:'s',19:'t',20:'u',21:'v',22:'w',23:'x',24:'y',25:'z', \
+ 26:'A',27:'B',28:'C',29:'D',30:'E',31:'F',32:'G',33:'H',34:'I',35:'J',36:'K',37:'L',38:'M', \
+ 39:'N',40:'O',41:'P',42:'Q',43:'R',44:'S',45:'T',46:'U',47:'V',48:'W',49:'X',50:'Y',51:'Z', \
+ 52:'$',53:'%'} # Last two are for jokers A, B
+A2N = \
+{'a': 0,'b': 1,'c': 2,'d': 3,'e': 4,'f': 5,'g': 6,'h': 7,'i': 8,'j': 9,'k':10,'l':11,'m':12, \
+ 'n':13,'o':14,'p':15,'q':16,'r':17,'s':18,'t':19,'u':20,'v':21,'w':22,'x':23,'y':24,'z':25, \
+ 'A':26,'B':27,'C':28,'D':29,'E':30,'F':31,'G':32,'H':33,'I':34,'J':35,'K':36,'L':37,'M':38, \
+ 'N':39,'O':40,'P':41,'Q':42,'R':43,'S':44,'T':45,'U':46,'V':47,'W':48,'X':49,'Y':50,'Z':51, \
+ '$':52,'%':53} # Last two are for jokers A, B
+Num2Out = \
+{ 0:'A', 1:'B', 2:'C', 3:'D', 4:'E', 5:'F', 6:'G', 7:'H', 8:'I', 9:'J',10:'K',11:'L',12:'M', \
+ 13:'N',14:'O',15:'P',16:'Q',17:'R',18:'S',19:'T',20:'U',21:'V',22:'W',23:'X',24:'Y',25:'Z', \
+ 26:'A',27:'B',28:'C',29:'D',30:'E',31:'F',32:'G',33:'H',34:'I',35:'J',36:'K',37:'L',38:'M', \
+ 39:'N',40:'O',41:'P',42:'Q',43:'R',44:'S',45:'T',46:'U',47:'V',48:'W',49:'X',50:'Y',51:'Z'}
+
+##########################################################################################
+# Define Deck Class. This is what will contain the operations done on the deck. 
+# For different versions of the cipher, not all of these operations will 
+# necessarily be used. 
+class Deck:
+    def __init__(self):
+        # Begin by defining the Deck
+        self.Cards=range(DeckSize)
+        if (Debug):
+            dbugf.write('Deck Initiated\n')
+
+    def Reset(self):
+        self.Cards=range(DeckSize)
+
+    def RandomShuffle(self):
+        # use Python's "random" module to shuffle the deck randomly. Used for testing. 
+        import random
+        random.shuffle(self.Cards)
+        if (Debug):
+            dbugf.write('Deck Shuffled, random\n')
+
+    def GetIndexByValue(self,Value):
+        # Simple. Find the card with the given value and return its location index in the deck. 
+        for i in range(DeckSize):
+            if (self.Cards[i]==Value):
+                j=i
+        return(j)
+
+    def ShiftCard(self,icard,Nshift):
+        # Shift card located at icard Nshift spaces, where Nshift
+        # can be positive or negative, but since the cards are cyclic, 
+        # any negative shift is equal to a positive shift mod 54
+        # A card at the bottom of the deck is treated as though it is at the top, 
+        # as per original algorithm specification. 
+        # icard = current position
+        # jcard = new position. 
+        jcard = icard + Nshift
+        if (jcard > DeckSize - 1):
+            jcard = jcard - DeckSize + 1
+        value = self.Cards.pop(icard)
+        self.Cards.insert(jcard,value)
+
+    def ShiftCardNew(self,icard,Nshift):
+        # This is a variant on ShiftCard, and the change is simple and subtle. In this case, 
+        # count the moving of the bottom card to the top as an operation, that is, consider
+        # the divider between the bottom and the top card to be a card itself. Without this, 
+        # is it not possible for the shift card operation to ever put a card at the top of 
+        # the deck. 
+        jcard = icard + Nshift
+        if (jcard > DeckSize - 1):
+            jcard = jcard - DeckSize
+        value = self.Cards.pop(icard)  
+        self.Deck.insert(jcard,value)
+
+    def Cut(self,index):
+        # Perform standard cut. Index is how many cards off of the top, so if it's 10, then
+        # cards 0-9 are moved to the bottom. 
+        self.Cards=self.Cards[index:]+self.Cards[:index]
+
+    def KeyCut(self,index):
+        # Perform a key cut. Cut based on the index given, but do not change the bottom card. 
+        j=index+1
+        k=DeckSize-1
+        self.Cards = self.Cards[j:k]+self.Cards[:j]+[self.Cards[k]]
+
+    def TripleCut(self):
+        # Perform the triple cut. Find the two jokers, and move all the cards below the bottom
+        # joker to the top, all the cards above the top joker to the bottom, leave the cards
+        # in the middle, and the jokers, unchanged. 
+        jA=self.Cards.index(JKA)
+        jB=self.Cards.index(JKB)
+        lo=min([jA,jB])
+        hi=max([jA,jB])+1
+        self.Cards=self.Cards[hi:]+self.Cards[lo:hi]+self.Cards[:lo]
+
+    def RotateCut(self):
+        # This operation is not part of the original cipher. It is similar to the triple cut, but
+        # instead of splitting the deck into three parts and swapping the top and bottom part, 
+        # rotate the parts. The bottom cards go to the top, the top to the middle, middle to bottom
+        # Do not move the jokers, else it's not a reversable operation. 
+        jA=self.Cards.index(JKA)
+        jB=self.Cards.index(JKB)
+        lo=min([jA,jB])
+        hi=max([jA,jB])
+        self.Cards = self.Cards[hi+1:] + \
+                    [self.Cards[lo]]   + \
+                     self.Cards[0:lo]  + \
+                    [self.Cards[hi]]   + \
+                     self.Cards[lo+1:hi]
+
+    def CountCut(self):
+        # Look at the bottom card on the deck, determine its value, and count this number down 
+        # from the top of the deck. Cut the deck at this point, but leave the bottom card on the
+        # bottom so that the algorithm is reversable. Both of the jokers are valued the same, as
+        # one less than the deck size, so if either of the jokers is the bottom card, the deck
+        # is unchanged. 
+        indx=self.Cards[len(self.Cards)-1]
+        if (Analyze):
+            acutf.write(N2A[indx])
+
+        if (not (indx == JKA or indx == JKB)):
+            # A joker was not the bottom card. Perform the cut. 
+            self.Cards=self.Cards[indx+1:53]+self.Cards[:(indx+1)]+[self.Cards[53]]
+        else:
+            # A joker was the bottom card, do nothing. 
+            pass
+
+    def Shuffle1(self):
+        # Perform a single perfect shuffle. split the deck in half and interlace the cards. 
+        # The bottom card of the top half is the new bottom card of the deck. 
+        HalfSize=DeckSize/2
+        top=self.Cards[:HalfSize]
+        bot=self.Cards[HalfSize:]
+        self.Cards=[]
+        for i in range(HalfSize):
+            self.Cards.append(top[i])
+            self.Cards.append(bot[i])
+
+    def InverseShuffle1(self):
+        # Perform inverse of a single perfect shuffle. By hand, this is easier to do than
+        # performing the shuffle by hand. 
+        bot=[]
+        top=[]
+        for i in range(0,DeckSize,2):
+            bot.append(self.Cards[i])
+            top.append(self.Cards[i+1])
+        self.Cards=bot+top
+
+    def OutputDeckDebug(self):
+        # Write the whole deck, in numeric, to the debugging file
+        if (not Debug):
+            return 1
+        dbugf.write("Current Deck State:\n")
+        for card in self.Cards:
+            dbugf.write(str(card).rjust(2)+' ')
+        dbugf.write('\n')
+
+
+
+
+##########################################################################################
+# This is the original Solitaire algorithm
+class SolitaireOriginal:
+    def __init__(self):
+        self.Deck=Deck()
+
+    def KeyDeck(self,key):
+        # The given key, in variable s, should have only capital letters.
+        for i in range(len(key)):
+            self.GetNextOutput()
+            S=key[i].upper()
+            CutCard=A2N[S]-26 # Original def uses only values 1-26 for keying. 
+            print "Key Value",CutCard
+            self.Deck.KeyCut(CutCard)
+
+    def GetNextOutput(self):
+        output = JKA
+        # If the output is a joker, run through it again. 
+        while (output == JKA or output == JKB): 
+            # First Shift Jokers, One spot for A, two for B
+            jokerA=self.Deck.GetIndexByValue(JKA)
+            shift=1
+            self.Deck.ShiftCard(jokerA,shift)
+            jokerB=self.Deck.GetIndexByValue(JKB)
+            shift=2
+            self.Deck.ShiftCard(jokerB,shift)
+            # Next do a triple cut on the jokers
+            self.Deck.TripleCut()
+            # Next read bottom card, and do a count cut on this
+            self.Deck.CountCut()
+            iCard=self.Deck.Cards[0]+1
+            # remember, count down the number of cards that is the value of the top card, 
+            # and it's the next card that is the output, so find the index  value of the top
+            # card , and add one. If it's Joker 53, don't add one, else out of range. 
+            # Joker's always have a value of 53. 
+            if (iCard > 53):
+                iCard = 53
+            output=self.Deck.Cards[iCard]
+            if (Analyze):
+                aoutf.write(N2A[output])
+                atopf.write(N2A[iCard])
+            if (Debug):
+                self.Deck.OutputDeckDebug()
+        return output
+
+    def Reset(self):
+        self.Deck.Reset()
+
+
+##########################################################################################
+# Variant on the Solitaire algorithm
+class SolitaireVariant:
+    def __init__(self):
+        self.Deck=Deck()
+
+    def KeyDeck(self,key):
+        # The given key, in variable s, should have only capital letters.
+        for i in range(len(key)):
+            self.GetNextOutput()
+            S=key[i].upper() 
+            CutCard=A2N[S]-26 # Original def uses only values 1-26 for keying. 
+            self.Deck.CountCut(CutCard)
+
+    def GetNextOutput(self):
+        output = JKA
+        # If the output is a joker, run through it again. 
+        while (output == JKA or output == JKB): 
+            # First Shift Jokers, One spot for A, two for B
+            jokerA=self.Deck.GetIndexByValue(52)
+            shift=1
+            self.Deck.ShiftCardNew(jokerA,shift)
+            jokerB=self.Deck.GetIndexByValue(53)
+            shift=2
+            self.Deck.ShiftCardNew(jokerB,shift)
+            # Next do a triple cut on the jokers
+            self.Deck.TripleCut()
+            # Next read bottom card, and do a count cut on this
+            self.deck.CountCut()
+            iCard=self.Deck.Cards[0]
+            output=self.Deck.Cards[iCard]
+
+        return output
+
+    def Reset(self):
+        self.Deck.Reset()
+
+##########################################################################################
+# In this section, define other useful functions. 
+
+def CheckKey(s):
+    # Check that the key given is only letters. If not, throw an error, because it is
+    # important that the user is clear on the key, least the output become unusable. 
+    # If the key is lower case, it will be made uppercase, but this does not affect use. 
+    import re
+    key = s
+    # First get rid of all whitespace, assume this is not confusing. 
+
+##########################################################################################
+# This function removes punctuation and any non letter characters in the input text or the
+# key. It also will replce any number with its word equivalent. 
+def Sanitize(text):
+    import re
+    text=text.upper()
+    text=re.sub('1', 'ONE ' , text)
+    text=re.sub('2', 'TWO'  , text)
+    text=re.sub('3', 'THREE ', text)
+    text=re.sub('4', 'FOUR ', text)
+    text=re.sub('5', 'FIVE ', text)
+    text=re.sub('6', 'SIX ',  text)
+    text=re.sub('7', 'SEVEN ', text)
+    text=re.sub('8', 'EIGHT ', text)
+    text=re.sub('9', 'NINE ', text)
+    text=re.sub('[^A-Z]','', text)
+    return text
+
+##########################################################################################
+# Obligatory Usage help 
+def Usage():
+    print "-e :  --encrypt : Use Encryption Mode. Cipher stream is added to input, mod 26\n"
+    print "-d :  --decrypt : Use Decryption Mode. Cipher stream is subtracted from input, mod 26\n"
+    print "--help : This help output. If given, all else ignored.\n"
+    print "-i :  --infile  <FILENAME> : Read input from file given in FILENAME. If not given, then"
+    print "          program will attempt to read to standard input.\n" 
+    print "-o :  --outfile <FILENAME> : Output to file given in FILENAME. If not given, then"
+    print "          program will write to standard output.\n"
+    print "-k :  --key : The key for the solitaire algorithm. This requres an argument which is a"
+    print "          string of text given at the command line. If the key is very long, consider"
+    print "          using the key file option.\n"
+    print "-K : --key-file <FILENAME>: The key is read from the given file name.\n"
+    print "-O <N>  : Do output Only, no encryption or decryption, just put out the output stream."
+    print "          The argument N is the number of characters to output from the stream."
+    print "          If N is 0, then the output will be as many characters as the sanitized input.\n"
+    print "-V      : Use the Solitaire Variant instead of the original algorithm. This is for"
+    print "          testing and experimentation.\n"
+    print "--random (<NUM>): Generate random output. The deck is initially shuffled with Python's"
+    print "          intrinsic random.shuffle routine. By default, it is shulffed 5 times, but "
+    print "          optionally, a number of shuffles can be specified after the random flag. The"
+    print "          length of the output stream will be given by the '-O' flag.\n"
+    print "-g  : --debug : Turn on Debugging. The file sdb.Debug will be created with Debugging info."
+    print "          This works similarly to 'verbose' output of some other programs. If '-g' is given"
+    print "          multiple times, then the Debugging output level is increased, up to 4.\n"
+    print "--analyze : Creates the files sdb.cutcards, sdb.topcards, sdb.outcards, which contain"
+    print "          values of the cut cards, the top index card that gives the output card index,"
+    print "          and the output card values. These files are in both upper and lower case.\n" 
+    print "-5 : --fives : Write the output in blocks of five characters, ten blocks to a line."
+    print "          Otherwise, the output is given as a block of 64 characters per line.\n"
+    print "--noformat   : no formatting, just the string of characters.\n"
+    print "\n"
+    print "NOTES: The -e, -d, and -O flags change the output mode, and the program will go with"
+    print "which ever is given last in the argument list.\n"
+    print "The input for encryption is 'sanitized', in that all spaces and punctuation are removed."
+    print "Also, all numeric digits are replaced with their word equivalents (e.g. '5' -> 'FIVE')."
+    print "This process is applied to all inputs, even in decryption mode, where presumably the input"
+    print "is already capital-text-only.\n"
+    print "The key material given, either through text at the command line with the '-k' option, or"
+    print "through a key file with the '-K' option, is sanitized in the same way as the input text."
+    print "It is important to remember this, since any numbers will be changed to their word"
+    print "equivalents, thus potentially changing the key unexpectedly. Punctuation and other symbols"
+    print "are removed from the key as normal.\n"
+    print "If the -O option is given with a 0 length '-O 0', then an input source is expected,"
+    print "either as an input file or through standard in. The code will output as many characters"
+    print "as the sanitized input stream. This is useful if you don't know how many stream characters"
+    print "you need exactly, but you know it needs to match a lenght of text.\n"
+    print "Be warned that if you use the Debug or analysis options, the code will produce files"
+    print "that contain the output stream characters, even if you are using encrypt or decrypt mode.\n"
+    exit()
+
+##########################################################################################
+# Format the output string to block the text in groups of five, with ten groups of five
+# to a line. 
+def PrintInFives(s):
+    out=""
+    j=0
+    k=1
+    for i in xrange(len(s)):
+        out=out+s[i]
+        j+=1
+        if (j == 5 and k < 10):
+            j=0
+            k+=1
+            out=out+" "         
+        elif (j == 5 and k == 10):
+            out=out+"\n"
+            j=0
+            k=1
+    return out
+
+def PrintBlock(s):
+    out=""
+    j=0
+    for i in xrange(len(s)):
+        out=out+s[i]
+        j+=1
+        if (j==64):
+            out=out+"\n"
+            j=0
+    return out
+
+##########################################################################################
+# Parse the command line options
+class Parser:
+    def __init__(self):
+        self.mode = 0
+        self.N = 0
+        self.inputf = False
+        self.inputname = ''
+        self.outputf = False
+        self.outputname = ''
+        self.Debug = 0
+        self.analyze = False
+        self.variant = False
+        self.random = False
+        self.NRandomShuffles=5
+        self.noformat = False
+        self.fives = False
+        self.key = ''
+        self.HaveKey = False
+        self.IsKeyFile = False
+
+    def ParseArgs(self,args):
+        if (len(args) < 2):
+            Usage()
+
+        # Look for help in the list, and output it if found. Ignore all else. 
+        for arg in args:
+            if (arg == '--help'):
+                Usage()
+
+        # Cycle through args, figure out what to do. 
+        skip=False
+        for i in range(len(args)):
+            if (skip):
+                skip=False
+                continue
+            arg=args[i]
+            if (arg == '-e' or arg == '--encrypt'):
+                self.mode=1
+            elif (arg == '-d' or arg == '--decrypt'):
+                self.mode=-1
+            elif (arg == '-O'):
+                self.mode=0
+                if (i+1 < len(args)):
+                    try:
+                        self.N = int(args[i+1])
+                        skip=True
+                    except:
+                        print "ERROR: NO INTEGER FOR STREAM OUTPUT LENGTH"
+                        exit()
+                else:
+                    print "ERROR: NO STREAM OUTPUT LENGTH GIVEN"
+                    exit()
+            elif (arg == '-i' or arg=='--infile'):
+                self.inputf=True
+                if (i+1 < len(args)):
+                    self.inputname=args[i+1]
+                    skip=True
+                else:
+                    print "ERROR: NO INPUT FILE NAME GIVEN"
+                    exit()
+            elif (arg == '-o' or arg=='--output'):
+                self.outputf=True
+                if (i+1 < len(args)):
+                    self.outputname=args[i+1]
+                    skip=True
+                else:
+                    print "ERROR: NO OUTPUT FILE NAME GIVEN"
+                    exit()
+            elif (arg == '-k' or arg == '--key'):
+                if (i+1 < len(args)):
+                    self.key = args[i+1]
+                    self.HaveKey = True
+                    skip=True
+                else:
+                    print "ERROR: key text expected but not given."
+                    exit()
+            elif (arg == '-K' or arg == '--key-file'):
+                if (i+1 < len(args)):
+                    self.key = args[i+1]
+                    self.HaveKey = True
+                    self.IsKeyFile = True
+                    skip = True
+                else:
+                    print "ERROR: key file name expected but not given."
+                    exit()
+            elif (arg == '-g' or arg == '--debug'):
+                self.Debug += 1  # Increment increase Debugging level for each given '-g'
+            elif (arg == '--analyze'):
+                self.analyze=True
+            elif (arg == '--random'):
+                self.random=True
+                k = 5 # default number of random shuffles
+                if (i+1 < len(args)):
+                    try:
+                        k=int(args[i+1])  # Look for number
+                        skip=True
+                    except:     
+                        pass  # next argument was not an integer, continue with default
+                self.NRandomShuffles=k
+            elif (arg == '--noformat'):
+                self.noformat = True
+            elif (arg == '--fives'):
+                self.fives = True
+                        
+##########################################################################################
+# begin Main routine
+if (__name__ == '__main__'):
+
+    import os
+    import sys
+
+    # Let's begin with parsing the options given on the command line
+    opts=Parser()
+    opts.ParseArgs(sys.argv)
+
+    ######################################################################################    
+    # Now determine behavior based on options
+    # Determine if we're doing Debugging or cipher analysis and set flags
+    if (opts.Debug > 0):
+        Debug = True
+        dbugf = open('sdb.Debug','w')
+    else:
+        Debug = False
+
+    if (opts.analyze):
+        Analyze = True
+        acutf = open('sdb.cutcards','w')
+        aoutf = open('sdb.outcards','w')
+        atopf = open('sdb.topcards','w')
+    else:
+        Analyze = False
+
+    # Initiate a cipher object
+    if (opts.variant):
+        Cipher=SolitaireVariant()
+    else:
+        Cipher=SolitaireOriginal()
+
+    ######################################################################################
+    # Set up Keying, either with key at command line, key file, or random
+    if (opts.random):
+        for i in xrange(opts.NRandomShuffles):
+            Cipher.Deck.RandomShuffle()
+    elif (opts.HaveKey):
+        if (opts.IsKeyFile):
+            try:
+                keyf = open(opts.key,'r')
+            except:
+                print "ERROR: failed to open key file", opts.key
+        else:
+            if (len(opts.key) > 0):
+                key = Sanitize(opts.key)
+                Cipher.KeyDeck(key)
+            else:
+                pass
+
+
+    # Open input files, optionally
+    intext = ""
+    if (opts.inputf):
+        # We do have an input file given, open it and get the text. 
+        try:
+            inf = open(opts.inputname,'r')
+        except:
+            print 'ERROR: failed to open input file', sys.exc_info()[0]
+            exit()
+        intext = inf.read()
+        intext = Sanitize(intext)
+        inf.close()
+    elif ( (not opts.inputf) and (opts.mode == 0 and opts.N == 0)):
+        # Don't have an input file, but still matching output length against a text length
+        intext = sys.stdin.read()
+        if ( len(intext) == 0):
+            print "ERROR: No input file or piped text found."
+            exit()
+        intext = Sanitize(intext)
+
+    # Open output files, else write to standard out
+    if (opts.outputf):
+        try:
+            otf = open(opts.outputname,'w')
+        except:
+            print 'ERROR: failed to open output file', sys.exc_info()[0]
+            exit()
+        StdOut=False
+    else:
+        otf = sys.stdout
+        StdOut=True
+
+    ######################################################################################
+    # Set up lengths based on input
+    if ( opts.mode == 0 and opts.N == 0):
+        # An length of input is expected in this case. 
+        if (len(intext) == 0):
+            print "ERROR: With option '-O 0', a length of input text is expected. None found."
+            exit()
+        else:
+            N = len(intext)
+    elif ( opts.mode == 0 and opts.N > 0):
+        N = opts.N
+    elif ( opts.mode != 0):
+        N = len(intext)
+
+    ######################################################################################
+    # Now get output stream
+    O=[]
+    for i in range(N):
+        O.append(Cipher.GetNextOutput())
+
+    ######################################################################################
+    # Perform required operation and output
+    output=""
+    if ( opts.mode == 0):
+        for i in range(N):
+            output=output+Num2Out[O[i]]
+    else:
+        for i in range(N):
+            output=output+Num2Out[((O[i] + opts.mode*A2N[intext[i]]) % 26)]
+
+    if (opts.fives):
+        output=PrintInFives(output)
+    elif (opts.noformat):
+        pass # output is already OK as it is, a single line, just the text. 
+    else:
+        # Print in 64 character wide block
+        output = PrintBlock(output)
+
+    if (StdOut):
+        output=output+'\n' # so terminals don't mess up. 
+    otf.write(output)
+    if (opts.outputf):
+        otf.close()
+
